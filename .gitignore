@@ -1,0 +1,19 @@
+# Environnements virtuels
+myenv/
+venv/
+
+# Données volumineuses
+DATA/
+Test_local/
+*.jpg
+*.png
+
+# Dossiers générés
+__pycache__/
+*.pyc
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Dossiers perso
+Entrainement segformer v5/
