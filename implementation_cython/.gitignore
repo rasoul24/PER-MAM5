@@ -1,0 +1,18 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Cython generated files
+*.c
+*.cpp
+*.so
+*.pyd
+build/
+
+# Virtual environment
+venv/
+.env
+
+# OS files
+.DS_Store

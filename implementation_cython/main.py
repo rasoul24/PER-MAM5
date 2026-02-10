@@ -15,7 +15,7 @@ from prediction_model import predict_model
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #lien vers le dossier qui contient le modèle pré-entrainé
-dossier_modele_fine_tune = r"C:\Users\rasou\Desktop\PER\Modele_Complet"
+dossier_modele_fine_tune = r"/home/rasoul/Bureau/PER/Modele_Complet"
 
 #définition du processor qui traite les images avant de les envoyer au modèle
 processor = SegformerImageProcessor.from_pretrained("nvidia/segformer-b2-finetuned-cityscapes-1024-1024")
@@ -64,8 +64,9 @@ if __name__ == "__main__":
     start = time.perf_counter()
 
     # 1. Chargement et exécution
-    path_img = r"C:\Users\rasou\Desktop\PER\DATA\Polygon_14_new\Polygon_1481\ZED2_KSC_114777_L_P039920.png"
+    #path_img = r"C:\Users\rasou\Desktop\PER\DATA\Polygon_14_new\Polygon_1481\ZED2_KSC_114777_L_P039920.png"
     #path_img = r"C:\Users\rasou\Desktop\PER\DATA\Bbox_30_new\Bbox_2412\ZED3_KSC_130023_L_P034854.png"
+    path_img = r"/home/rasoul/Bureau/fichiers/images_test2.jpg"
     img = cv2.imread(path_img)
 
     if img.max() <= 1.0:
