@@ -4,25 +4,41 @@ cimport cython
 import cv2
 from libc.math cimport sqrt
 
+# On définit des seuils spécifiques (exprimés en % de la surface totale)
+# Poteaux (9) et Panneaux (13) sont fins, Véhicules (11) sont gros.
+CLASS_THRESHOLDS = {
+    4: 0.1,  # Braille Blocks (5%)
+    5: 0.1,   # Caution Zone (20%)
+    8: 0.05,   # Pedestrian (30%)
+    9: 0.02,  # Pole (2%) - Très fin
+    11: 0.1,  # Vehicle (10%)
+    13: 0.02  # Traffic Sign (2%)
+}
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def get_bounding_boxes(short[:, :] pred_mask, int[:] target_ids, int min_area=50):
-    """
-    Optimisé : Retourne une liste de dicts (label, coords) pour l'embarqué.
-    """
+def get_bounding_boxes(short[:, :] pred_mask, int[:] target_ids, float default_min_area_ratio=0.1):
     cdef int h = pred_mask.shape[0]
     cdef int w = pred_mask.shape[1]
-    cdef int i, class_id, n_targets = target_ids.shape[0]
+    cdef float total_area = <float>(h * w)
+    cdef int i, r, c, class_id, n_targets = target_ids.shape[0]
+    cdef float current_min_area
 
-    # Liste pour stocker les résultats
     results = []
 
-    # On crée un buffer réutilisable pour éviter les réallocations mémoire
+    # Buffer pour le masque binaire
     cdef np.ndarray[np.uint8_t, ndim=2] binary_mask_np = np.zeros((h, w), dtype=np.uint8)
     cdef unsigned char[:, :] binary_mask = binary_mask_np
 
+    # Noyau pour l'ouverture morphologique (nettoyage du bruit)
+
     for i in range(n_targets):
         class_id = target_ids[i]
+
+        # Déterminer le seuil d'aire pour cette classe précise
+        # Si la classe n'est pas dans le dictionnaire, on utilise le ratio par défaut
+        ratio = CLASS_THRESHOLDS.get(class_id, default_min_area_ratio)
+        current_min_area = ratio * total_area
 
         with nogil:
             for r in range(h):
@@ -32,22 +48,24 @@ def get_bounding_boxes(short[:, :] pred_mask, int[:] target_ids, int min_area=50
                     else:
                         binary_mask[r, c] = 0
 
-        # Extraction des contours (OpenCV)
+        # --- ÉTAPE DE NETTOYAGE ---
+
+
+        # Extraction des contours
         contours, _ = cv2.findContours(binary_mask_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area >= min_area:
+            if area >= 90000:
                 x, y, bw, bh = cv2.boundingRect(cnt)
-
-
                 results.append({
                     "id": class_id,
-                    "bbox": (int(x), int(y), int(x + bw), int(y + bh)), # x1, y1, x2, y2
+                    "bbox": (int(x), int(y), int(x + bw), int(y + bh)),
                     "area": int(area)
                 })
 
     return results
+
 
 
 @cython.boundscheck(False)
@@ -144,9 +162,9 @@ def generer_description(list position_objets):
 
     #Il faut filtre annonce d'une certaine manière
 
-    print("coeff_danger = ",coeff_danger)
+    print("coeff_danger = ",(coeff_danger/surface_image)*100)
 
-    if(coeff_danger/surface_image >= 0.0 ):
+    if((coeff_danger/surface_image)*100 >= 0.3):
         annonce = ". ".join(morceaux)
     else:
         annonce = "No danger"
@@ -159,13 +177,13 @@ def generer_description(list position_objets):
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def generer_description2(list boxes, float[:] vecteur_directeur, dict id2label):
+
     cdef int H = 128
     cdef int W = 128
 
     # Point central (bas de l'image)
     cdef float x_0 = W / 2.0
     cdef float y_0 = <float>H
-
 
     cdef list phrases = []
     cdef float a = vecteur_directeur[0]
@@ -211,7 +229,9 @@ def generer_description2(list boxes, float[:] vecteur_directeur, dict id2label):
             gauche_droite = "à droite"
         else:
             gauche_droite = "aligné"
+
         label_name = id2label.get(obj["id"], "objet inconnu")
+
 
         phrases.append(f"{label_name} est {devant_derriere} {gauche_droite}")
 

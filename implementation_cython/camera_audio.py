@@ -5,13 +5,14 @@ import torch
 import numpy as np
 import pyttsx3
 import queue
+import time
 from collections import deque
 from transformers import SegformerImageProcessor, SegformerForSemanticSegmentation
 
-# Optimisation CUDA
+
 torch.backends.cudnn.benchmark = True
 
-# --- IMPORTS CYTHON ---
+
 try:
     from medial_axis import trajectoire, vecteur_directeur, check_collisions, generer_alertes_collision
     from description_image import decode_segmap_cython
@@ -21,14 +22,13 @@ try:
 except ImportError as e:
     print(f" Erreur Cython : {e}")
 
-# --- CONFIGURATION ---
-MODEL_DIR = "/home/rasoul/Bureau/PER/Modele_Complet"
+
+MODEL_DIR = r"C:\Users\rasou\Desktop\PER\Modele_Complet"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TARGET_CLASSES = np.array([1, 2, 3, 4, 5, 8], dtype=np.int32)
 
-# Résolutions
 IA_RES = (720, 480)      # Résolution augmentée pour une meilleure précision
-#DISPLAY_RES = (320, 240)  # Résolution d'affichage
+
 DISPLAY_RES = (720, 480)  # Résolution d'affichage
 
 palette_np = np.zeros((14, 3), dtype=np.uint8)
@@ -58,7 +58,8 @@ def voice_loop():
 # --- 2. THREAD CAPTURE & AFFICHAGE ---
 def capture_loop():
     global stop_flag
-    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    #cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, DISPLAY_RES[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, DISPLAY_RES[1])
 
@@ -79,45 +80,85 @@ def model_loop(model, processor):
     model.to(device).eval()
     last_voice_time = 0
 
+    kernel = np.ones((5, 5), np.uint8)
+
+    print(" Boucle IA démarrée...")
+
     with torch.inference_mode():
         while not stop_flag:
             if not frame_queue:
-                time.sleep(0.01); continue
+                time.sleep(0.01)
+                continue
 
-            # A. Récupération et redimensionnement à 256x256 pour la précision
+            t_start_frame = time.time()
+
             frame_bgr = frame_queue[-1]
             frame_small = cv2.resize(frame_bgr, IA_RES)
             frame_rgb = cv2.cvtColor(frame_small, cv2.COLOR_BGR2RGB)
 
-            # B. Inférence IA
-            # On utilise une résolution de 256 pour que les petits objets soient visibles
             prediction = predict_model(model=model, processor=processor, img=frame_rgb, device=device)
 
-            # C. Post-traitement Cython (on reste sur 128 pour la vitesse des calculs géométriques)
-            mask = cv2.resize(prediction.astype(np.int16), (720, 480), interpolation=cv2.INTER_NEAREST)
+            mask = cv2.resize(prediction.astype(np.int16), DISPLAY_RES, interpolation=cv2.INTER_NEAREST)
+
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
             img_rgb = decode_segmap_cython(mask, palette_np)
-
-            # D. Mise à jour de l'overlay pour l'affichage
             seg_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-            global_seg_overlay = cv2.resize(seg_bgr, DISPLAY_RES, interpolation=cv2.INTER_NEAREST)
 
-            # E. Logique vocale
+            try:
+                boxes = get_bounding_boxes(mask, TARGET_CLASSES)
+                for obj in boxes:
+                    x1, y1, x2, y2 = obj["bbox"]
+                    label_name = id2label.get(obj["id"], "Object")
+                    cv2.rectangle(seg_bgr, (x1, y1), (x2, y2), (255, 255, 255), 2)
+                    cv2.putText(seg_bgr, label_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            except Exception as e:
+                print(f"Erreur calcul boxes : {e}")
+
+            global_seg_overlay = seg_bgr
+
+
+            t_end_frame = time.time()
+            dt = t_end_frame - t_start_frame
+            fps = 1.0 / dt if dt > 0 else 0
+
+
+            fps_text = f"FPS: {fps:.1f} ({dt:.3f}s)"
+
+
+            cv2.rectangle(seg_bgr, (5, 5), (180, 35), (0, 0, 0), -1)
+            cv2.putText(seg_bgr, fps_text, (10, 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+            global_seg_overlay = seg_bgr
+
+            print(f"\r {fps_text} ", end="")
+
             now = time.time()
             if now - last_voice_time > 10.0:
+
                 try:
-                    skel = trajectoire(img_rgb, 5).astype(np.float32)
+                    skel = trajectoire(img_rgb, 5).astype(np.uint8)
+                    seg_bgr[skel > 0] = (0, 255, 255)
+
+                    v_dir = vecteur_directeur(skel.astype(np.float32))
+                    center_x, center_y = DISPLAY_RES[0] // 2, DISPLAY_RES[1] - 50
+                    if not np.isnan(v_dir[0]):
+                        end_point = (int(center_x + v_dir[0] * 50), int(center_y + v_dir[1] * 50))
+                        cv2.arrowedLine(seg_bgr, (center_x, center_y), end_point, (255, 255, 255), 3)
+
                     boxes = get_bounding_boxes(mask, TARGET_CLASSES)
-                    position_objets = get_position_objets(boxes,vecteur_directeur(skel),id2label)
+                    for obj in boxes:
+                        x1, y1, x2, y2 = obj["bbox"]
+                        label_name = id2label.get(obj["id"], "Object")
+                        cv2.rectangle(seg_bgr, (x1, y1), (x2, y2), (255, 255, 255), 2)
+                        cv2.putText(seg_bgr, label_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-                    #phrases = generer_description2(boxes, vecteur_directeur(skel), id2label)
-                    phrases = generer_description(position_objets)
+                except Exception as e:
+                    print(f"Erreur visuels (skel/boxes) : {e}")
 
-                    print("phrases = ",phrases)
-                    if phrases: voice_queue.put((2, phrases))
-                    last_voice_time = now
-                except: pass
-
-def main():
+def main2():
     global stop_flag
     processor = SegformerImageProcessor.from_pretrained("nvidia/segformer-b2-finetuned-cityscapes-1024-1024")
     model = SegformerForSemanticSegmentation.from_pretrained(MODEL_DIR).to(device)
@@ -134,5 +175,45 @@ def main():
     except KeyboardInterrupt: stop_flag = True
     cv2.destroyAllWindows()
 
+def main():
+    global stop_flag
+
+    try:
+        processor = SegformerImageProcessor.from_pretrained(
+            "nvidia/segformer-b2-finetuned-cityscapes-1024-1024"
+        )
+    except Exception as e:
+        print(f"Erreur chargement processeur : {e}")
+        return
+
+    print(f"Chargement du modèle depuis {MODEL_DIR}...")
+    model = SegformerForSemanticSegmentation.from_pretrained(
+        MODEL_DIR,
+        local_files_only=True
+    ).to(device)
+
+    if device.type == "cuda":
+        model = model.half()
+        torch.backends.cudnn.benchmark = True
+
+    t_audio = threading.Thread(target=voice_loop, daemon=True)
+    t_model = threading.Thread(target=model_loop, args=(model, processor), daemon=True)
+    t_cap = threading.Thread(target=capture_loop, daemon=True)
+
+    t_audio.start()
+    t_model.start()
+    t_cap.start()
+
+    print(" Système prêt et optimisé.")
+
+    try:
+        while not stop_flag:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        stop_flag = True
+
+
 if __name__ == "__main__":
+
     main()
+

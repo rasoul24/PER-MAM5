@@ -3,16 +3,21 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Cython generated files
+# Cython generated files (On ne push pas les binaires compilés)
 *.c
 *.cpp
 *.so
 *.pyd
 build/
 
-# Virtual environment
+# Virtual environment (Adapté à ton dossier actuel)
 venv/
+myenv/
 .env
+
+# Modèles lourds (Optionnel : à retirer si tu veux absolument les push via LFS)
+Modele_Complet/
 
 # OS files
 .DS_Store
+Thumbs.db
