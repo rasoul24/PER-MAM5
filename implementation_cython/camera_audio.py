@@ -23,7 +23,8 @@ except ImportError as e:
     print(f" Erreur Cython : {e}")
 
 
-MODEL_DIR = r"C:\Users\rasou\Desktop\PER\Modele_Complet"
+#MODEL_DIR = r"C:\Users\rasou\Desktop\PER\Modele_Complet"
+MODEL_DIR = "/home/rasoul/Bureau/PER/Modele_Complet"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TARGET_CLASSES = np.array([1, 2, 3, 4, 5, 8], dtype=np.int32)
 
@@ -58,8 +59,8 @@ def voice_loop():
 # --- 2. THREAD CAPTURE & AFFICHAGE ---
 def capture_loop():
     global stop_flag
-    #cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    #cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, DISPLAY_RES[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, DISPLAY_RES[1])
 
@@ -136,7 +137,7 @@ def model_loop(model, processor):
             print(f"\r {fps_text} ", end="")
 
             now = time.time()
-            if now - last_voice_time > 10.0:
+            if now - last_voice_time > 5.0:
 
                 try:
                     skel = trajectoire(img_rgb, 5).astype(np.uint8)
@@ -149,11 +150,24 @@ def model_loop(model, processor):
                         cv2.arrowedLine(seg_bgr, (center_x, center_y), end_point, (255, 255, 255), 3)
 
                     boxes = get_bounding_boxes(mask, TARGET_CLASSES)
+
+                    positions = get_position_objets(boxes, v_dir, id2label)
+                    phrases = generer_description(positions)
+
+                    if phrases:
+                        print(f"\n📢 Vocal: {phrases}")
+                        # On met le message dans la file avec une priorité
+                        voice_queue.put((2, phrases))
+
+                    last_voice_time = now
+
                     for obj in boxes:
                         x1, y1, x2, y2 = obj["bbox"]
                         label_name = id2label.get(obj["id"], "Object")
                         cv2.rectangle(seg_bgr, (x1, y1), (x2, y2), (255, 255, 255), 2)
                         cv2.putText(seg_bgr, label_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+
 
                 except Exception as e:
                     print(f"Erreur visuels (skel/boxes) : {e}")

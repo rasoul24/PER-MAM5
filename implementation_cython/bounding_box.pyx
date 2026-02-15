@@ -56,7 +56,7 @@ def get_bounding_boxes(short[:, :] pred_mask, int[:] target_ids, float default_m
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area >= 90000:
+            if area >= 5000:
                 x, y, bw, bh = cv2.boundingRect(cnt)
                 results.append({
                     "id": class_id,
@@ -155,7 +155,7 @@ def generer_description(list position_objets):
             morceaux.append(f"Traffic sign {desc}")
 
         else:
-            #morceaux.append(f"{label} {desc}")
+            morceaux.append(f"{label} {desc}")
             continue
 
 
@@ -164,7 +164,7 @@ def generer_description(list position_objets):
 
     print("coeff_danger = ",(coeff_danger/surface_image)*100)
 
-    if((coeff_danger/surface_image)*100 >= 0.3):
+    if((coeff_danger/surface_image)*100 >= 0.0):
         annonce = ". ".join(morceaux)
     else:
         annonce = "No danger"
