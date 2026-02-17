@@ -24,18 +24,40 @@ except ImportError as e:
 
 
 #MODEL_DIR = r"C:\Users\rasou\Desktop\PER\Modele_Complet"
-MODEL_DIR = "/home/rasoul/Bureau/PER/Modele_Complet"
+#MODEL_DIR = "/home/rasoul/Bureau/PER/Modele_Complet"
+MODEL_DIR = r"C:\Users\rasou\Desktop\PER\modele_distiler"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-TARGET_CLASSES = np.array([1, 2, 3, 4, 5, 8], dtype=np.int32)
 
-IA_RES = (720, 480)      # Résolution augmentée pour une meilleure précision
+#TARGET_CLASSES = np.array([1, 2, 3, 4, 5, 8], dtype=np.int32)
+TARGET_CLASSES = np.array([0, 1, 4, 5, 6, 8, 9, 11, 12, 13], dtype=np.int32)
+
+IA_RES = (224, 224)      # Résolution augmentée pour une meilleure précision
 
 DISPLAY_RES = (720, 480)  # Résolution d'affichage
 
 palette_np = np.zeros((14, 3), dtype=np.uint8)
-palette = {0:(128,64,128), 1:(244,35,232), 4:(0,255,255), 8:(220,20,60), 11:(0,0,142)}
+
+#palette = {0:(128,64,128), 1:(244,35,232), 4:(0,255,255), 8:(220,20,60), 11:(0,0,142)}
+
+palette = {
+    0:  (128, 64, 128), # Road (Violet)
+    1:  (244, 35, 232), # SideWalk (Rose)
+    4:  (0, 255, 255),  # Braille Blocks (Cyan - Très visible)
+    5:  (220, 190, 40),  # Caution Zone (Orange/Jaune)
+    6:  (70, 70, 70),   # Building (Gris)
+    8:  (220, 20, 60),  # Pedestrian (Rouge)
+    9:  (153, 153, 153),# Pole (Gris clair)
+    11: (0, 0, 142),    # Vehicle (Bleu foncé)
+    12: (102, 102, 156),# Wall (Mauve/Gris)
+    13: (220, 220, 0)   # Traffic Sign (Jaune vif)
+}
+
 for cid, col in palette.items(): palette_np[cid] = col
-id2label = {4:"Braille Blocks", 5:"Caution Zone", 8:"Pedestrian", 9:"Pole", 11:"Vehicle", 13:"Traffic Sign"}
+
+# A tester avec les deux versions
+#id2label = {4:"Braille Blocks", 5:"Caution Zone", 8:"Pedestrian", 9:"Pole", 11:"Vehicle", 13:"Traffic Sign"}
+id2label = {0:"Road",1:"SideWalk", 4:"Braille Blocks", 5:"Caution Zone",6:"Building", 8:"Pedestrian", 9:"Pole", 11:"Vehicle", 12:"Wall" ,13:"Traffic Sign"}
+
 
 stop_flag = False
 frame_queue = deque(maxlen=1)
@@ -44,23 +66,36 @@ global_seg_overlay = np.zeros((DISPLAY_RES[1], DISPLAY_RES[0], 3), dtype=np.uint
 
 # --- 1. THREAD AUDIO ---
 def voice_loop():
-    try:
-        engine = pyttsx3.init()
-        engine.setProperty('rate', 170)
-    except: return
+    print("--- Thread Audio : Prêt ---")
     while not stop_flag:
         try:
+            # On attend un message pendant 0.5s
             _, message = voice_queue.get(timeout=0.5)
+
+            # INITIALISATION LOCALE (pour éviter le gel du thread)
+            engine = pyttsx3.init()
+            engine.setProperty('rate', 150)
+
+            print(f"--- Lecture : {message}")
             engine.say(message)
             engine.runAndWait()
+
+            # NETTOYAGE (très important sous Windows)
+            del engine
+
             voice_queue.task_done()
-        except queue.Empty: continue
+
+        except queue.Empty:
+            continue
+        except Exception as e:
+            print(f"Erreur thread vocal : {e}")
+            time.sleep(0.1)
 
 # --- 2. THREAD CAPTURE & AFFICHAGE ---
 def capture_loop():
     global stop_flag
-    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
-    #cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    #cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, DISPLAY_RES[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, DISPLAY_RES[1])
 
@@ -104,7 +139,8 @@ def model_loop(model, processor):
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-            img_rgb = decode_segmap_cython(mask, palette_np)
+            #img_rgb = decode_segmap_cython(mask, palette_np)
+            img_rgb = decode_segmap_cython(mask.astype(np.int16), palette_np)
             seg_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
 
             try:
@@ -137,11 +173,11 @@ def model_loop(model, processor):
             print(f"\r {fps_text} ", end="")
 
             now = time.time()
-            if now - last_voice_time > 5.0:
-
+            if now - last_voice_time > 10.0:
                 try:
-                    skel = trajectoire(img_rgb, 5).astype(np.uint8)
+                    skel = trajectoire(img_rgb, 5).astype(np.float32)
                     seg_bgr[skel > 0] = (0, 255, 255)
+                    last_voice_time = now
 
                     v_dir = vecteur_directeur(skel.astype(np.float32))
                     center_x, center_y = DISPLAY_RES[0] // 2, DISPLAY_RES[1] - 50
@@ -150,16 +186,41 @@ def model_loop(model, processor):
                         cv2.arrowedLine(seg_bgr, (center_x, center_y), end_point, (255, 255, 255), 3)
 
                     boxes = get_bounding_boxes(mask, TARGET_CLASSES)
+                    collisions = check_collisions(skel,boxes)
+                    message_collision = generer_alertes_collision(collisions,id2label)
+
 
                     positions = get_position_objets(boxes, v_dir, id2label)
                     phrases = generer_description(positions)
 
-                    if phrases:
-                        print(f"\n📢 Vocal: {phrases}")
-                        # On met le message dans la file avec une priorité
-                        voice_queue.put((2, phrases))
+                    # 2. Sécurisation : Transformer les listes en chaînes de caractères (strings)
+                    # generer_description renvoie souvent une liste de phrases
+                    if isinstance(phrases, list):
+                        phrase_finale = ". ".join(phrases)
+                    else:
+                        phrase_finale = str(phrases) if phrases else ""
 
-                    last_voice_time = now
+                    # generer_alertes_collision peut renvoyer None ou une liste selon ton implémentation
+                    if isinstance(message_collision, list):
+                        collision_finale = ". ".join(message_collision)
+                    elif message_collision is None:
+                        collision_finale = ""
+                    else:
+                        collision_finale = str(message_collision)
+
+                    # 3. Construction du message vocal complet
+                    # On ne met le message dans la file que s'il y a quelque chose à dire
+                    if phrase_finale or collision_finale:
+                        # On combine les deux avec un espace, en filtrant les textes vides
+                        message_complet = " ".join(filter(None, [phrase_finale, collision_finale]))
+
+                        print(f"\n Vocal: {message_complet}")
+
+                        # Envoi à la file avec priorité 2
+                        # Si collision_finale n'est pas vide, on pourrait même passer en priorité 1
+                        priorite = 1 if collision_finale else 2
+                        voice_queue.put((priorite, message_complet))
+
 
                     for obj in boxes:
                         x1, y1, x2, y2 = obj["bbox"]
@@ -167,35 +228,18 @@ def model_loop(model, processor):
                         cv2.rectangle(seg_bgr, (x1, y1), (x2, y2), (255, 255, 255), 2)
                         cv2.putText(seg_bgr, label_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-
-
                 except Exception as e:
                     print(f"Erreur visuels (skel/boxes) : {e}")
 
-def main2():
-    global stop_flag
-    processor = SegformerImageProcessor.from_pretrained("nvidia/segformer-b2-finetuned-cityscapes-1024-1024")
-    model = SegformerForSemanticSegmentation.from_pretrained(MODEL_DIR).to(device)
-
-    threads = [
-        threading.Thread(target=voice_loop, daemon=True),
-        threading.Thread(target=capture_loop, daemon=True),
-        threading.Thread(target=model_loop, args=(model, processor), daemon=True)
-    ]
-    for t in threads: t.start()
-
-    try:
-        while not stop_flag: time.sleep(0.5)
-    except KeyboardInterrupt: stop_flag = True
-    cv2.destroyAllWindows()
 
 def main():
     global stop_flag
 
     try:
-        processor = SegformerImageProcessor.from_pretrained(
-            "nvidia/segformer-b2-finetuned-cityscapes-1024-1024"
-        )
+        #processor = SegformerImageProcessor.from_pretrained(
+            #"nvidia/segformer-b2-finetuned-cityscapes-1024-1024"
+        #)
+        processor = SegformerImageProcessor.from_pretrained("nvidia/mit-b0")
     except Exception as e:
         print(f"Erreur chargement processeur : {e}")
         return

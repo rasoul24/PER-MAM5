@@ -9,7 +9,7 @@ from libc.math cimport sqrt
 CLASS_THRESHOLDS = {
     4: 0.1,  # Braille Blocks (5%)
     5: 0.1,   # Caution Zone (20%)
-    8: 0.05,   # Pedestrian (30%)
+    8: 0.1,   # Pedestrian (30%)
     9: 0.02,  # Pole (2%) - Très fin
     11: 0.1,  # Vehicle (10%)
     13: 0.02  # Traffic Sign (2%)
@@ -56,7 +56,7 @@ def get_bounding_boxes(short[:, :] pred_mask, int[:] target_ids, float default_m
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area >= 5000:
+            if area >= 10000:
                 x, y, bw, bh = cv2.boundingRect(cnt)
                 results.append({
                     "id": class_id,
@@ -236,3 +236,42 @@ def generer_description2(list boxes, float[:] vecteur_directeur, dict id2label):
         phrases.append(f"{label_name} est {devant_derriere} {gauche_droite}")
 
     return phrases
+
+id2label = {4:"Braille Blocks", 5:"Caution Zone", 8:"Pedestrian", 9:"Pole", 11:"Vehicle", 13:"Traffic Sign"}
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def consignes_navigations(list boxes, list collisions, float[:] vecteur_directeur, dict id2label, int image_width):
+    cdef list consignes_nav = []
+    cdef int center_x = image_width // 2
+    cdef float obj_x_min, obj_x_max, obj_center_x
+
+    # 1. Si aucune collision n'est détectée, on confirme la marche
+    if len(collisions) == 0:
+        return ["Chemin libre, continuez tout droit"]
+
+    for col_idx in collisions:
+        # col_idx est l'index de la box qui pose problème dans la liste 'boxes'
+        # On suppose que chaque box est un tuple/list (x_min, y_min, x_max, y_max, class_id)
+        box = boxes[col_idx]
+        obj_x_min = box[0]
+        obj_x_max = box[2]
+        obj_id = box["id"]
+
+        nom_objet = id2label.get(obj_id, "Obstacle")
+        obj_center_x = (obj_x_min + obj_x_max) / 2
+
+        # Cas particulier pour les piétons (souvent mobiles, on reste prudent)
+        if nom_objet == "Pedestrian":
+            consignes_nav.append("Attention, piéton devant. Ralentissez.")
+            continue
+
+        # Logique d'évitement latérale
+        if obj_center_x < center_x:
+            # L'objet est plutôt à gauche, on suggère d'aller à droite
+            consignes_nav.append(f"{nom_objet} à gauche, déviez légèrement à droite.")
+        else:
+            # L'objet est plutôt à droite, on suggère d'aller à gauche
+            consignes_nav.append(f"{nom_objet} à droite, déviez légèrement à gauche.")
+
+    return consignes_nav
