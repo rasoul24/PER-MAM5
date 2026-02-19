@@ -9,7 +9,7 @@ from libc.math cimport sqrt
 CLASS_THRESHOLDS = {
     4: 0.1,  # Braille Blocks (5%)
     5: 0.1,   # Caution Zone (20%)
-    8: 0.1,   # Pedestrian (30%)
+    8: 0.01,   # Pedestrian (30%)
     9: 0.02,  # Pole (2%) - Très fin
     11: 0.1,  # Vehicle (10%)
     13: 0.02  # Traffic Sign (2%)
@@ -20,6 +20,7 @@ CLASS_THRESHOLDS = {
 def get_bounding_boxes(short[:, :] pred_mask, int[:] target_ids, float default_min_area_ratio=0.1):
     cdef int h = pred_mask.shape[0]
     cdef int w = pred_mask.shape[1]
+
     cdef float total_area = <float>(h * w)
     cdef int i, r, c, class_id, n_targets = target_ids.shape[0]
     cdef float current_min_area
@@ -50,13 +51,12 @@ def get_bounding_boxes(short[:, :] pred_mask, int[:] target_ids, float default_m
 
         # --- ÉTAPE DE NETTOYAGE ---
 
-
         # Extraction des contours
         contours, _ = cv2.findContours(binary_mask_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area >= 10000:
+            if area >= current_min_area:
                 x, y, bw, bh = cv2.boundingRect(cnt)
                 results.append({
                     "id": class_id,
@@ -71,8 +71,8 @@ def get_bounding_boxes(short[:, :] pred_mask, int[:] target_ids, float default_m
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def get_position_objets(list boxes, float[:] vecteur_directeur, dict id2label):
-    cdef int H = 720
-    cdef int W = 480
+    cdef int H = 512
+    cdef int W = 512
     cdef float x_0 = W / 2.0
     cdef float y_0 = <float>H
 
@@ -80,11 +80,6 @@ def get_position_objets(list boxes, float[:] vecteur_directeur, dict id2label):
     cdef float a = vecteur_directeur[0]
     cdef float b = vecteur_directeur[1]
 
-    # Normalisation
-    cdef float norme_dir = sqrt(a*a + b*b)
-    if norme_dir > 0:
-        a /= norme_dir
-        b /= norme_dir
 
     for obj in boxes:
         x1, y1, x2, y2 = obj["bbox"]
@@ -121,7 +116,7 @@ def get_position_objets(list boxes, float[:] vecteur_directeur, dict id2label):
 
 
 
-#id2label = {4:"Braille Blocks", 5:"Caution Zone", 8:"Pedestrian", 9:"Pole", 11:"Vehicle", 13:"Traffic Sign"}
+CLASSES_AFFICHE = np.array([8,9,11,12], dtype=np.int32)
 
 def generer_description(list position_objets):
     """
@@ -132,7 +127,7 @@ def generer_description(list position_objets):
     cdef str label, desc
 
     cdef float coeff_danger = 0.0
-    cdef float surface_image = 720*480
+    cdef float surface_image = 512*512
 
     # On utilise bien 'position_objets' comme défini dans l'argument juste au-dessus
     for obj in position_objets:
@@ -153,11 +148,6 @@ def generer_description(list position_objets):
 
         elif label == "Traffic Sign":
             morceaux.append(f"Traffic sign {desc}")
-
-        else:
-            morceaux.append(f"{label} {desc}")
-            continue
-
 
 
     #Il faut filtre annonce d'une certaine manière

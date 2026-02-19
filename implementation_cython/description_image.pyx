@@ -8,6 +8,8 @@ import torch
 def decode_segmap_cython(short[:, :] mask, unsigned char[:, :] palette):
     cdef int h = mask.shape[0]
     cdef int w = mask.shape[1]
+    print("h = ",h)
+    print("w = ",w)
     cdef int i, j, class_id
 
     # On crée l'image de sortie

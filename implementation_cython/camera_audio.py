@@ -31,9 +31,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #TARGET_CLASSES = np.array([1, 2, 3, 4, 5, 8], dtype=np.int32)
 TARGET_CLASSES = np.array([0, 1, 4, 5, 6, 8, 9, 11, 12, 13], dtype=np.int32)
 
-IA_RES = (224, 224)      # Résolution augmentée pour une meilleure précision
+IA_RES = (512, 512)      # Résolution augmentée pour une meilleure précision
 
 DISPLAY_RES = (720, 480)  # Résolution d'affichage
+
+CLASSES_AFFICHE = np.array([8,9,11,12], dtype=np.int32)
+
 
 palette_np = np.zeros((14, 3), dtype=np.uint8)
 
@@ -146,10 +149,11 @@ def model_loop(model, processor):
             try:
                 boxes = get_bounding_boxes(mask, TARGET_CLASSES)
                 for obj in boxes:
-                    x1, y1, x2, y2 = obj["bbox"]
-                    label_name = id2label.get(obj["id"], "Object")
-                    cv2.rectangle(seg_bgr, (x1, y1), (x2, y2), (255, 255, 255), 2)
-                    cv2.putText(seg_bgr, label_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                    if obj["id"] in CLASSES_AFFICHE:
+                        x1, y1, x2, y2 = obj["bbox"]
+                        label_name = id2label.get(obj["id"], "Object")
+                        cv2.rectangle(seg_bgr, (x1, y1), (x2, y2), (255, 255, 255), 2)
+                        cv2.putText(seg_bgr, label_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             except Exception as e:
                 print(f"Erreur calcul boxes : {e}")
 
